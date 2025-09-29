@@ -1,0 +1,58 @@
+name: Monitors Sync
+
+on:
+  schedule:
+    - cron: "0 6 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run the sync without mutating remote resources"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Sync monitoring configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MONITORS_API_TOKEN: ${{ secrets.MONITORS_API_TOKEN }}
+      MONITORS_BASE_URL: ${{ secrets.MONITORS_BASE_URL }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run monitors sync with retries
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          attempt=1
+          until python scripts/monitors_sync.py; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Monitors sync failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "Attempt $attempt failed, retrying in 30 seconds..."
+            attempt=$((attempt + 1))
+            sleep 30
+          done

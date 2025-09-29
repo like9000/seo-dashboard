@@ -1,0 +1,58 @@
+name: Refresh Views
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Optional list of views to refresh"
+        required: false
+        default: "all"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Refresh database views
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TARGET: ${{ github.event.inputs.target || 'all' }}
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run refresh views with retries
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          attempt=1
+          until python scripts/refresh_views.py; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Refresh views failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "Attempt $attempt failed, retrying in 30 seconds..."
+            attempt=$((attempt + 1))
+            sleep 30
+          done

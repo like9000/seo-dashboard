@@ -1,0 +1,58 @@
+name: GSC Pull
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: "Optional log level override"
+        required: false
+        default: "info"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Pull Google Search Console data
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+      GSC_PROPERTY_IDS: ${{ secrets.GSC_PROPERTY_IDS }}
+      LOG_LEVEL: ${{ github.event.inputs.log_level || 'info' }}
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run GSC pull script with retries
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          attempt=1
+          until python scripts/gsc_pull.py; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "GSC pull failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "Attempt $attempt failed, retrying in 30 seconds..."
+            attempt=$((attempt + 1))
+            sleep 30
+          done
